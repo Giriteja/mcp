@@ -1,0 +1,7 @@
+# Install all required packages
+streamlit
+pandas
+plotly
+uuid
+datetime
+typing
