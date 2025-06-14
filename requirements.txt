@@ -5,3 +5,7 @@ plotly
 uuid
 datetime
 typing
+aiohttp
+sqlite3
+requests
+asyncio
