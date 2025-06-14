@@ -1,23 +1,18 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import requests
 import json
 import time
 import uuid
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import smtplib
 import hashlib
 import os
 from typing import Dict, List, Optional
-import asyncio
-import aiohttp
 from dataclasses import dataclass
 import logging
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,27 +29,23 @@ st.set_page_config(
 # Database Configuration
 DATABASE_PATH = "hr_recruiting.db"
 
-# API Configuration
+# API Configuration (using environment variables or defaults)
 API_CONFIG = {
     "linkedin": {
         "base_url": "https://api.linkedin.com/v2",
-        "client_id": os.getenv("LINKEDIN_CLIENT_ID", "your_linkedin_client_id"),
-        "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET", "your_linkedin_secret")
+        "client_id": os.getenv("LINKEDIN_CLIENT_ID", "demo_linkedin_id"),
+        "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET", "demo_linkedin_secret")
     },
     "indeed": {
         "base_url": "https://api.indeed.com/ads/apisearch",
-        "publisher_id": os.getenv("INDEED_PUBLISHER_ID", "your_indeed_publisher_id")
+        "publisher_id": os.getenv("INDEED_PUBLISHER_ID", "demo_indeed_id")
     },
     "sendgrid": {
-        "api_key": os.getenv("SENDGRID_API_KEY", "your_sendgrid_api_key"),
+        "api_key": os.getenv("SENDGRID_API_KEY", "demo_sendgrid_key"),
         "base_url": "https://api.sendgrid.com/v3/mail/send"
     },
-    "google_calendar": {
-        "api_key": os.getenv("GOOGLE_CALENDAR_API_KEY", "your_google_calendar_key"),
-        "base_url": "https://www.googleapis.com/calendar/v3"
-    },
     "openai": {
-        "api_key": os.getenv("OPENAI_API_KEY", "your_openai_api_key"),
+        "api_key": os.getenv("OPENAI_API_KEY", "demo_openai_key"),
         "base_url": "https://api.openai.com/v1"
     }
 }
@@ -90,17 +81,6 @@ class Job:
     posted_date: datetime
     applications_count: int
     hiring_manager: str
-
-@dataclass
-class Interview:
-    id: str
-    candidate_id: str
-    job_id: str
-    interviewer: str
-    scheduled_time: datetime
-    status: str
-    feedback: str
-    score: int
 
 # Database Manager
 class DatabaseManager:
@@ -147,22 +127,6 @@ class DatabaseManager:
                 posted_date TIMESTAMP,
                 applications_count INTEGER DEFAULT 0,
                 hiring_manager TEXT
-            )
-        ''')
-        
-        # Interviews table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS interviews (
-                id TEXT PRIMARY KEY,
-                candidate_id TEXT,
-                job_id TEXT,
-                interviewer TEXT,
-                scheduled_time TIMESTAMP,
-                status TEXT,
-                feedback TEXT,
-                score INTEGER,
-                FOREIGN KEY (candidate_id) REFERENCES candidates (id),
-                FOREIGN KEY (job_id) REFERENCES jobs (id)
             )
         ''')
         
@@ -217,7 +181,7 @@ class DatabaseManager:
     def add_candidate(self, candidate: Candidate):
         """Add a new candidate to the database"""
         query = '''
-            INSERT INTO candidates (id, name, email, phone, position, skills, experience, 
+            INSERT OR REPLACE INTO candidates (id, name, email, phone, position, skills, experience, 
                                   score, status, location, resume_url, applied_date, source, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
@@ -225,7 +189,7 @@ class DatabaseManager:
             candidate.id, candidate.name, candidate.email, candidate.phone,
             candidate.position, json.dumps(candidate.skills), candidate.experience,
             candidate.score, candidate.status, candidate.location, candidate.resume_url,
-            candidate.applied_date, candidate.source, candidate.notes
+            candidate.applied_date.isoformat(), candidate.source, candidate.notes
         )
         return self.execute_query(query, params)
     
@@ -260,14 +224,14 @@ class DatabaseManager:
     def add_job(self, job: Job):
         """Add a new job posting"""
         query = '''
-            INSERT INTO jobs (id, title, department, description, requirements, 
-                            location, salary_range, status, posted_date, hiring_manager)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (id, title, department, description, requirements, 
+                            location, salary_range, status, posted_date, hiring_manager, applications_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
         params = (
             job.id, job.title, job.department, job.description,
             json.dumps(job.requirements), job.location, job.salary_range,
-            job.status, job.posted_date, job.hiring_manager
+            job.status, job.posted_date.isoformat(), job.hiring_manager, job.applications_count
         )
         return self.execute_query(query, params)
     
@@ -288,112 +252,57 @@ class DatabaseManager:
         query = "SELECT * FROM agent_logs ORDER BY timestamp DESC LIMIT ?"
         return self.execute_query(query, (limit,))
 
-# API Integration Classes
-class LinkedInAPI:
-    def __init__(self, config: Dict):
-        self.config = config
-        self.access_token = None
+# Mock API Services
+class APIService:
+    def __init__(self, name: str):
+        self.name = name
+        self.connected = True
     
-    async def search_candidates(self, keywords: str, location: str = None):
-        """Search for candidates on LinkedIn"""
-        # Simulated API call - replace with actual LinkedIn API
-        await asyncio.sleep(1)  # Simulate API delay
+    def search_candidates(self, keywords: str, location: str = None):
+        """Mock candidate search"""
+        time.sleep(1)  # Simulate API delay
         
-        # Mock response
-        candidates = [
-            {
-                "name": f"LinkedIn Candidate {i}",
-                "title": "Software Engineer",
-                "location": location or "San Francisco",
-                "skills": ["Python", "JavaScript", "React"],
-                "profile_url": f"https://linkedin.com/in/candidate{i}"
+        candidates = []
+        for i in range(3):
+            candidate_data = {
+                "name": f"{self.name} Candidate {i+1}",
+                "email": f"candidate{i+1}@{self.name.lower()}.com",
+                "position": random.choice(["Software Engineer", "Data Scientist", "DevOps Engineer"]),
+                "skills": random.sample(["Python", "JavaScript", "React", "AWS", "Docker", "SQL"], 4),
+                "experience": random.randint(2, 8),
+                "location": location or random.choice(["San Francisco", "New York", "Remote"]),
+                "source": self.name
             }
-            for i in range(1, 4)
-        ]
+            candidates.append(candidate_data)
         
         return candidates
     
-    async def post_job(self, job_data: Dict):
-        """Post a job to LinkedIn"""
-        await asyncio.sleep(1)  # Simulate API delay
-        return {"status": "success", "job_id": f"linkedin_{uuid.uuid4().hex[:8]}"}
+    def post_job(self, job_data: Dict):
+        """Mock job posting"""
+        time.sleep(1)
+        return {"status": "success", "job_id": f"{self.name.lower()}_{uuid.uuid4().hex[:8]}"}
+    
+    def send_email(self, to_email: str, subject: str, body: str):
+        """Mock email sending"""
+        time.sleep(0.5)
+        logger.info(f"Email sent to {to_email}: {subject}")
+        return {"status": "success", "message_id": f"msg_{uuid.uuid4().hex[:8]}"}
 
-class IndeedAPI:
-    def __init__(self, config: Dict):
-        self.config = config
-    
-    async def search_jobs(self, query: str, location: str = None):
-        """Search jobs on Indeed"""
-        await asyncio.sleep(1)  # Simulate API delay
-        
-        # Mock response
-        jobs = [
-            {
-                "title": f"Indeed Job {i}",
-                "company": f"Company {i}",
-                "location": location or "Remote",
-                "description": f"Job description for position {i}",
-                "url": f"https://indeed.com/job{i}"
-            }
-            for i in range(1, 6)
-        ]
-        
-        return jobs
-    
-    async def post_job(self, job_data: Dict):
-        """Post a job to Indeed"""
-        await asyncio.sleep(1)  # Simulate API delay
-        return {"status": "success", "job_id": f"indeed_{uuid.uuid4().hex[:8]}"}
-
-class EmailService:
-    def __init__(self, config: Dict):
-        self.config = config
-    
-    async def send_email(self, to_email: str, subject: str, body: str):
-        """Send email using SendGrid API"""
-        try:
-            # Simulate email sending
-            await asyncio.sleep(0.5)
-            
-            # In production, use actual SendGrid API
-            logger.info(f"Email sent to {to_email}: {subject}")
-            return {"status": "success", "message_id": f"msg_{uuid.uuid4().hex[:8]}"}
-        
-        except Exception as e:
-            logger.error(f"Email sending failed: {e}")
-            return {"status": "error", "error": str(e)}
-    
-    async def send_bulk_emails(self, recipients: List[Dict]):
-        """Send bulk emails"""
-        results = []
-        for recipient in recipients:
-            result = await self.send_email(
-                recipient['email'],
-                recipient['subject'],
-                recipient['body']
-            )
-            results.append(result)
-        return results
-
+# AI Agent Class
 class AIAgent:
-    def __init__(self, name: str, config: Dict, db_manager: DatabaseManager):
+    def __init__(self, name: str, db_manager: DatabaseManager):
         self.name = name
-        self.config = config
         self.db_manager = db_manager
         self.status = "idle"
     
-    async def screen_candidate(self, candidate_data: Dict):
+    def screen_candidate(self, candidate_data: Dict):
         """AI-powered candidate screening"""
         try:
             self.status = "active"
+            time.sleep(2)  # Simulate AI processing
             
-            # Simulate AI screening process
-            await asyncio.sleep(2)
-            
-            # Calculate score based on skills, experience, etc.
             score = self.calculate_candidate_score(candidate_data)
             
-            # Log activity
             self.db_manager.log_agent_activity(
                 self.name,
                 "candidate_screening",
@@ -415,40 +324,40 @@ class AIAgent:
         
         # Experience weight (40%)
         experience = candidate_data.get('experience', 0)
-        experience_score = min(experience * 10, 40)  # Max 40 points
+        experience_score = min(experience * 5, 40)
         score += experience_score
         
         # Skills match weight (40%)
         candidate_skills = set(candidate_data.get('skills', []))
-        required_skills = set(['Python', 'JavaScript', 'React', 'AWS'])  # Mock requirements
-        skill_match = len(candidate_skills & required_skills) / len(required_skills)
-        skills_score = skill_match * 40
-        score += skills_score
+        required_skills = set(['Python', 'JavaScript', 'React', 'AWS'])
+        if required_skills:
+            skill_match = len(candidate_skills & required_skills) / len(required_skills)
+            skills_score = skill_match * 40
+            score += skills_score
         
         # Location preference (10%)
         if candidate_data.get('location') in ['San Francisco', 'New York', 'Remote']:
             score += 10
         
         # Random factor (10%)
-        import random
         score += random.randint(0, 10)
         
         return min(score, 100)
 
-# Initialize database and services
+# Initialize services
 @st.cache_resource
 def initialize_services():
-    """Initialize database and API services"""
+    """Initialize database and services"""
     db_manager = DatabaseManager(DATABASE_PATH)
     
     # Initialize API services
-    linkedin_api = LinkedInAPI(API_CONFIG['linkedin'])
-    indeed_api = IndeedAPI(API_CONFIG['indeed'])
-    email_service = EmailService(API_CONFIG['sendgrid'])
+    linkedin_api = APIService("LinkedIn")
+    indeed_api = APIService("Indeed")
+    email_service = APIService("Email")
     
     # Initialize AI agents
-    screening_agent = AIAgent("Screening Agent", API_CONFIG['openai'], db_manager)
-    sourcing_agent = AIAgent("Sourcing Agent", API_CONFIG['openai'], db_manager)
+    screening_agent = AIAgent("Screening Agent", db_manager)
+    sourcing_agent = AIAgent("Sourcing Agent", db_manager)
     
     return {
         'db_manager': db_manager,
@@ -459,15 +368,14 @@ def initialize_services():
         'sourcing_agent': sourcing_agent
     }
 
-# Initialize services
-services = initialize_services()
-db_manager = services['db_manager']
-
 # Authentication
 def authenticate_user(username: str, password: str):
     """Simple authentication"""
-    # In production, use proper authentication with hashed passwords
     return username == "admin" and password == "password123"
+
+# Initialize services
+services = initialize_services()
+db_manager = services['db_manager']
 
 # Session state initialization
 if 'authenticated' not in st.session_state:
@@ -494,7 +402,7 @@ if not st.session_state.authenticated:
             else:
                 st.error("Invalid credentials")
     
-    st.info("Demo credentials: username=admin, password=password123")
+    st.info("Demo credentials: username=**admin**, password=**password123**")
     st.stop()
 
 # Main application
@@ -530,20 +438,29 @@ api_status = {
     "LinkedIn API": "🟢 Connected",
     "Indeed API": "🟢 Connected",
     "SendGrid Email": "🟢 Connected",
-    "Google Calendar": "🟡 Limited",
     "OpenAI GPT": "🟢 Connected"
 }
 
 for api, status in api_status.items():
     st.sidebar.write(f"{status} {api}")
 
+# Quick Actions
+st.sidebar.divider()
+st.sidebar.subheader("Quick Actions")
+
+if st.sidebar.button("🔄 Refresh Data"):
+    st.sidebar.success("Data refreshed!")
+    st.rerun()
+
+if st.sidebar.button("📊 System Health"):
+    st.sidebar.info("All systems operational")
+
 # Main tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Dashboard", 
     "👥 Candidates", 
     "💼 Jobs", 
     "🤖 AI Agents", 
-    "📧 Communications", 
     "⚙️ Settings"
 ])
 
@@ -554,28 +471,26 @@ with tab1:
     candidates_df = db_manager.get_candidates()
     jobs_df = db_manager.get_jobs()
     
+    # KPI Metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_candidates = len(candidates_df) if candidates_df is not None else 0
+    hired_count = len(candidates_df[candidates_df['status'] == 'Hired']) if candidates_df is not None and not candidates_df.empty else 0
+    avg_score = candidates_df['score'].mean() if candidates_df is not None and not candidates_df.empty and 'score' in candidates_df.columns else 0
+    active_jobs = len(jobs_df[jobs_df['status'] == 'Active']) if jobs_df is not None and not jobs_df.empty else 0
+    
+    with col1:
+        st.metric("Total Candidates", total_candidates, "+5")
+    with col2:
+        st.metric("Hired This Month", hired_count, "+2")
+    with col3:
+        st.metric("Avg Candidate Score", f"{avg_score:.1f}", "+1.2")
+    with col4:
+        st.metric("Active Jobs", active_jobs, "+1")
+    
+    st.divider()
+    
     if candidates_df is not None and not candidates_df.empty:
-        # KPI Metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            total_candidates = len(candidates_df)
-            st.metric("Total Candidates", total_candidates, "+12")
-        
-        with col2:
-            hired_count = len(candidates_df[candidates_df['status'] == 'Hired'])
-            st.metric("Hired This Month", hired_count, "+3")
-        
-        with col3:
-            avg_score = candidates_df['score'].mean() if 'score' in candidates_df.columns else 0
-            st.metric("Avg Candidate Score", f"{avg_score:.1f}", "+2.1")
-        
-        with col4:
-            active_jobs = len(jobs_df[jobs_df['status'] == 'Active']) if jobs_df is not None else 0
-            st.metric("Active Jobs", active_jobs, "+1")
-        
-        st.divider()
-        
         # Charts
         col1, col2 = st.columns(2)
         
@@ -600,19 +515,16 @@ with tab1:
                     title="Candidate Score Distribution"
                 )
                 st.plotly_chart(fig, use_container_width=True)
-        
-        # Recent activity
-        st.subheader("Recent Agent Activity")
-        agent_logs = db_manager.get_agent_logs(10)
-        if agent_logs is not None and not agent_logs.empty:
-            for _, log in agent_logs.iterrows():
-                timestamp = log['timestamp']
-                st.text(f"[{timestamp}] {log['agent_name']}: {log['action']} - {log['details']}")
-        else:
-            st.info("No recent activity")
     
+    # Recent activity
+    st.subheader("Recent Agent Activity")
+    agent_logs = db_manager.get_agent_logs(5)
+    if agent_logs is not None and not agent_logs.empty:
+        for _, log in agent_logs.iterrows():
+            timestamp = log['timestamp']
+            st.text(f"[{timestamp}] {log['agent_name']}: {log['action']} - {log['details']}")
     else:
-        st.info("No data available. Start by adding some candidates and jobs.")
+        st.info("No recent activity. Try adding some candidates or running agent actions.")
 
 with tab2:
     st.header("Candidate Management")
@@ -647,25 +559,25 @@ with tab2:
                     id=f"CAND_{uuid.uuid4().hex[:8].upper()}",
                     name=name,
                     email=email,
-                    phone=phone,
+                    phone=phone or "",
                     position=position,
-                    skills=skills.split(',') if skills else [],
+                    skills=[s.strip() for s in skills.split(',') if s.strip()],
                     experience=experience,
                     score=0.0,
                     status="New",
-                    location=location,
-                    resume_url=resume_url,
+                    location=location or "",
+                    resume_url=resume_url or "",
                     applied_date=datetime.now(),
                     source=source,
-                    notes=notes
+                    notes=notes or ""
                 )
                 
                 result = db_manager.add_candidate(candidate)
-                if result:
+                if result is not None:
                     st.success("Candidate added successfully!")
                     st.rerun()
                 else:
-                    st.error("Failed to add candidate")
+                    st.error("Failed to add candidate. Email might already exist.")
     
     # Candidate filters
     st.subheader("Candidate Filters")
@@ -692,12 +604,17 @@ with tab2:
     if candidates_df is not None and not candidates_df.empty:
         # Process skills column
         if 'skills' in candidates_df.columns:
-            candidates_df['skills'] = candidates_df['skills'].apply(
-                lambda x: ', '.join(json.loads(x)) if x and x.startswith('[') else x
+            candidates_df['skills_display'] = candidates_df['skills'].apply(
+                lambda x: ', '.join(json.loads(x)) if x and x.startswith('[') else str(x) if x else ""
             )
         
+        # Display candidates
+        display_columns = ['name', 'position', 'email', 'status', 'score', 'experience', 'location']
+        if 'skills_display' in candidates_df.columns:
+            display_columns.append('skills_display')
+        
         st.dataframe(
-            candidates_df[['name', 'position', 'email', 'status', 'score', 'experience', 'location']],
+            candidates_df[display_columns],
             use_container_width=True
         )
         
@@ -708,26 +625,29 @@ with tab2:
         with col1:
             if st.button("🤖 AI Screen Selected"):
                 with st.spinner("AI agents screening candidates..."):
-                    # Simulate AI screening
+                    screening_agent = services['screening_agent']
+                    
                     for _, candidate in candidates_df.iterrows():
                         if candidate['status'] == 'New':
-                            # Update score and status
-                            import random
-                            new_score = random.randint(60, 95)
-                            new_status = "Interview" if new_score > 75 else "Screening"
+                            # Prepare candidate data for screening
+                            candidate_data = {
+                                'name': candidate['name'],
+                                'experience': candidate.get('experience', 0),
+                                'skills': json.loads(candidate.get('skills', '[]')) if candidate.get('skills') else [],
+                                'location': candidate.get('location', '')
+                            }
                             
-                            db_manager.execute_query(
-                                "UPDATE candidates SET score = ?, status = ? WHERE id = ?",
-                                (new_score, new_status, candidate['id'])
-                            )
-                    
-                    # Log activity
-                    db_manager.log_agent_activity(
-                        "Screening Agent",
-                        "bulk_screening",
-                        f"Screened {len(candidates_df)} candidates",
-                        "success"
-                    )
+                            # Screen candidate
+                            result = screening_agent.screen_candidate(candidate_data)
+                            
+                            if 'score' in result:
+                                new_score = result['score']
+                                new_status = "Interview" if new_score > 70 else "Screening"
+                                
+                                db_manager.execute_query(
+                                    "UPDATE candidates SET score = ?, status = ? WHERE id = ?",
+                                    (new_score, new_status, candidate['id'])
+                                )
                 
                 st.success("AI screening completed!")
                 st.rerun()
@@ -735,11 +655,17 @@ with tab2:
         with col2:
             if st.button("📧 Send Update Emails"):
                 with st.spinner("Sending emails..."):
-                    time.sleep(2)  # Simulate email sending
+                    email_service = services['email_service']
                     
-                    # Log activity
+                    for _, candidate in candidates_df.iterrows():
+                        email_service.send_email(
+                            candidate['email'],
+                            "Application Update",
+                            f"Dear {candidate['name']}, your application status has been updated."
+                        )
+                    
                     db_manager.log_agent_activity(
-                        "Communication Agent",
+                        "Email Service",
                         "bulk_email",
                         f"Sent updates to {len(candidates_df)} candidates",
                         "success"
@@ -750,14 +676,11 @@ with tab2:
         with col3:
             if st.button("📅 Schedule Interviews"):
                 with st.spinner("Scheduling interviews..."):
-                    time.sleep(2)  # Simulate scheduling
+                    qualified_candidates = candidates_df[candidates_df['score'] > 70] if 'score' in candidates_df.columns else pd.DataFrame()
                     
-                    # Update qualified candidates
-                    qualified_candidates = candidates_df[candidates_df['score'] > 75]
                     for _, candidate in qualified_candidates.iterrows():
                         db_manager.update_candidate_status(candidate['id'], "Interview")
                     
-                    # Log activity
                     db_manager.log_agent_activity(
                         "Interview Agent",
                         "bulk_scheduling",
@@ -769,7 +692,7 @@ with tab2:
                 st.rerun()
     
     else:
-        st.info("No candidates found matching the filters.")
+        st.info("No candidates found. Try adding some candidates or adjusting filters.")
 
 with tab3:
     st.header("Job Management")
@@ -801,19 +724,18 @@ with tab3:
                     id=f"JOB_{uuid.uuid4().hex[:8].upper()}",
                     title=job_title,
                     department=department,
-                    description=description,
-                    requirements=requirements.split(',') if requirements else [],
-                    location=location,
-                    salary_range=salary_range,
+                    description=description or "",
+                    requirements=[r.strip() for r in requirements.split(',') if r.strip()],
+                    location=location or "",
+                    salary_range=salary_range or "",
                     status=status,
                     posted_date=datetime.now(),
                     applications_count=0,
-                    hiring_manager=hiring_manager
+                    hiring_manager=hiring_manager or ""
                 )
                 
                 result = db_manager.add_job(job)
-                if result:
-                    # Log activity
+                if result is not None:
                     db_manager.log_agent_activity(
                         "Sourcing Agent",
                         "job_posted",
@@ -838,7 +760,7 @@ with tab3:
                 with col1:
                     st.write(f"**{job['title']}** - {job['department']}")
                     st.write(f"Job ID: {job['id']}")
-                    if job['salary_range']:
+                    if job.get('salary_range'):
                         st.write(f"Salary: {job['salary_range']}")
                 
                 with col2:
@@ -846,16 +768,16 @@ with tab3:
                     st.write(f"{status_color} {job['status']}")
                 
                 with col3:
-                    st.write(f"Applications: {job['applications_count']}")
+                    st.write(f"Applications: {job.get('applications_count', 0)}")
                 
                 with col4:
-                    if st.button(f"Manage", key=f"manage_{job['id']}"):
-                        st.info(f"Managing job: {job['title']}")
+                    if st.button(f"View Details", key=f"view_{job['id']}"):
+                        st.info(f"Job: {job['title']}\nDepartment: {job['department']}\nStatus: {job['status']}")
             
             st.divider()
     
     else:
-        st.info("No job postings available.")
+        st.info("No job postings available. Create your first job posting above!")
 
 with tab4:
     st.header("AI Agent Management")
@@ -866,61 +788,67 @@ with tab4:
     with col1:
         st.subheader("🤖 Agent Controls")
         
+        if st.button("🔍 Run Candidate Sourcing"):
+            with st.spinner("Sourcing candidates..."):
+                sourcing_agent = services['sourcing_agent']
+                linkedin_api = services['linkedin_api']
+                
+                # Simulate candidate sourcing from multiple platforms
+                all_candidates = []
+                
+                # LinkedIn sourcing
+                linkedin_candidates = linkedin_api.search_candidates("software engineer", "Remote")
+                all_candidates.extend(linkedin_candidates)
+                
+                # Indeed sourcing  
+                indeed_api = services['indeed_api']
+                indeed_candidates = indeed_api.search_candidates("developer", "San Francisco")
+                all_candidates.extend(indeed_candidates)
+                
+                # Add sourced candidates to database
+                for candidate_data in all_candidates:
+                    candidate = Candidate(
+                        id=f"CAND_{uuid.uuid4().hex[:8].upper()}",
+                        name=candidate_data['name'],
+                        email=candidate_data['email'],
+                        phone="",
+                        position=candidate_data['position'],
+                        skills=candidate_data['skills'],
+                        experience=candidate_data['experience'],
+                        score=0.0,
+                        status="New",
+                        location=candidate_data['location'],
+                        resume_url="",
+                        applied_date=datetime.now(),
+                        source=candidate_data['source'],
+                        notes="Sourced by AI agent"
+                    )
+                    db_manager.add_candidate(candidate)
+                
+                db_manager.log_agent_activity(
+                    "Sourcing Agent",
+                    "candidate_sourcing",
+                    f"Sourced {len(all_candidates)} new candidates",
+                    "success"
+                )
+            
+            st.success(f"Found {len(all_candidates)} new candidates!")
+            st.rerun()
+        
         if st.button("🔄 Restart All Agents"):
             with st.spinner("Restarting agents..."):
-                time.sleep(3)
-                
-                # Log activity
+                time.sleep(2)
                 db_manager.log_agent_activity(
                     "System",
                     "agent_restart",
                     "All agents restarted",
                     "success"
                 )
-            
             st.success("All agents restarted successfully!")
-        
-        if st.button("🔍 Run Candidate Sourcing"):
-            with st.spinner("Sourcing candidates..."):
-                # Simulate candidate sourcing
-                time.sleep(4)
-                
-                # Add some mock candidates
-                for i in range(3):
-                    candidate = Candidate(
-                        id=f"CAND_{uuid.uuid4().hex[:8].upper()}",
-                        name=f"AI Sourced Candidate {i+1}",
-                        email=f"sourced.candidate{i+1}@email.com",
-                        phone=f"+1-555-{random.randint(1000, 9999)}",
-                        position="Software Engineer",
-                        skills=["Python", "JavaScript", "React", "AWS"],
-                        experience=random.randint(2, 8),
-                        score=random.randint(70, 90),
-                        status="New",
-                        location="Remote",
-                        resume_url=f"https://example.com/resume{i+1}.pdf",
-                        applied_date=datetime.now(),
-                        source="AI Sourcing",
-                        notes="Sourced by AI agent"
-                    )
-                    db_manager.add_candidate(candidate)
-                
-                # Log activity
-                db_manager.log_agent_activity(
-                    "Sourcing Agent",
-                    "candidate_sourcing",
-                    "Sourced 3 new candidates from job boards",
-                    "success"
-                )
-            
-            st.success("Found 3 new candidates!")
-            st.rerun()
         
         if st.button("📊 Generate AI Insights"):
             with st.spinner("Generating insights..."):
                 time.sleep(2)
-                
-                # Log activity
                 db_manager.log_agent_activity(
                     "Analytics Agent",
                     "insight_generation",
@@ -930,10 +858,10 @@ with tab4:
             
             st.success("AI insights generated!")
             
-            # Display mock insights
-            st.info("💡 **AI Insight**: Top performing candidates have 5+ years experience and Python skills")
-            st.info("💡 **AI Insight**: 73% of hired candidates came from LinkedIn sourcing")
-            st.info("💡 **AI Insight**: Average time-to-hire decreased by 23% with AI screening")
+            # Display insights
+            st.info("💡 **AI Insight**: Candidates with Python + React skills have 85% higher hire rate")
+            st.info("💡 **AI Insight**: Remote positions receive 3x more applications than on-site")
+            st.info("💡 **AI Insight**: Average time-to-hire: 12 days (industry average: 18 days)")
     
     with col2:
         st.subheader("📈 Agent Performance")
@@ -942,8 +870,7 @@ with tab4:
         performance_data = {
             "Agent": ["Sourcing", "Screening", "Interview", "Analytics"],
             "Tasks Today": [45, 67, 23, 12],
-            "Success Rate": [94, 89, 96, 91],
-            "Avg Response Time": ["1.2s", "3.4s", "15.3s", "2.1s"]
+            "Success Rate": [94, 89, 96, 91]
         }
         
         df_performance = pd.DataFrame(performance_data)
@@ -965,14 +892,15 @@ with tab4:
     # Agent activity logs
     st.subheader("🔍 Recent Agent Activity")
     
-    # Refresh button
-    if st.button("🔄 Refresh Logs"):
-        st.rerun()
+    col1, col2 = st.columns([3, 1])
     
-    agent_logs = db_manager.get_agent_logs(20)
+    with col2:
+        if st.button("🔄 Refresh Logs"):
+            st.rerun()
+    
+    agent_logs = db_manager.get_agent_logs(10)
     
     if agent_logs is not None and not agent_logs.empty:
-        # Display logs in a nice format
         for _, log in agent_logs.iterrows():
             timestamp = log['timestamp']
             status_icon = "✅" if log['status'] == 'success' else "❌" if log['status'] == 'error' else "⚠️"
@@ -981,7 +909,7 @@ with tab4:
                 col1, col2, col3 = st.columns([1, 2, 4])
                 
                 with col1:
-                    st.write(f"{status_icon} {log['status'].title()}")
+                    st.write(f"{status_icon}")
                 
                 with col2:
                     st.write(f"**{log['agent_name']}**")
@@ -992,189 +920,9 @@ with tab4:
             
             st.divider()
     else:
-        st.info("No agent activity logs available.")
+        st.info("No agent activity yet. Try running some agent actions above!")
 
 with tab5:
-    st.header("Communication Center")
-    
-    # Email templates
-    st.subheader("📧 Email Templates")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        template_type = st.selectbox("Template Type", [
-            "Application Received",
-            "Interview Invitation", 
-            "Rejection Notice",
-            "Offer Letter",
-            "Follow-up Reminder"
-        ])
-        
-        # Template content based on type
-        templates = {
-            "Application Received": {
-                "subject": "Application Received - {position}",
-                "body": """Dear {candidate_name},
-
-Thank you for your interest in the {position} role at our company. We have received your application and our team will review it shortly.
-
-You can expect to hear back from us within 3-5 business days.
-
-Best regards,
-HR Team"""
-            },
-            "Interview Invitation": {
-                "subject": "Interview Invitation - {position}",
-                "body": """Dear {candidate_name},
-
-We are pleased to invite you for an interview for the {position} role.
-
-Interview Details:
-- Date: {interview_date}
-- Time: {interview_time}
-- Duration: 45 minutes
-- Format: Video call (link will be sent separately)
-
-Please confirm your availability.
-
-Best regards,
-{hiring_manager}"""
-            },
-            "Rejection Notice": {
-                "subject": "Update on Your Application - {position}",
-                "body": """Dear {candidate_name},
-
-Thank you for your interest in the {position} role and for taking the time to interview with us.
-
-After careful consideration, we have decided to move forward with another candidate whose experience more closely matches our current needs.
-
-We encourage you to apply for future opportunities that match your skills and experience.
-
-Best regards,
-HR Team"""
-            }
-        }
-        
-        current_template = templates.get(template_type, {"subject": "", "body": ""})
-        
-        subject = st.text_input("Subject", value=current_template["subject"])
-        body = st.text_area("Email Body", value=current_template["body"], height=200)
-    
-    with col2:
-        st.subheader("📊 Email Statistics")
-        
-        # Mock email stats
-        email_stats = {
-            "Total Sent Today": 47,
-            "Open Rate": "68%",
-            "Response Rate": "34%",
-            "Bounce Rate": "2%"
-        }
-        
-        for stat, value in email_stats.items():
-            st.metric(stat, value)
-        
-        st.divider()
-        
-        # Send test email
-        st.subheader("🧪 Send Test Email")
-        test_email = st.text_input("Test Email Address")
-        
-        if st.button("Send Test Email") and test_email:
-            with st.spinner("Sending test email..."):
-                time.sleep(1)
-                
-                # Log activity
-                db_manager.log_agent_activity(
-                    "Email Service",
-                    "test_email",
-                    f"Test email sent to {test_email}",
-                    "success"
-                )
-            
-            st.success(f"Test email sent to {test_email}")
-    
-    st.divider()
-    
-    # Bulk email sending
-    st.subheader("📤 Bulk Email Campaign")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        recipient_filter = st.selectbox("Send to", [
-            "All New Candidates",
-            "Interview Scheduled",
-            "Pending Response",
-            "Custom Selection"
-        ])
-    
-    with col2:
-        campaign_template = st.selectbox("Use Template", list(templates.keys()))
-    
-    with col3:
-        if st.button("📧 Send Campaign"):
-            with st.spinner("Sending bulk emails..."):
-                # Get candidates based on filter
-                candidates_df = db_manager.get_candidates()
-                
-                if candidates_df is not None and not candidates_df.empty:
-                    if recipient_filter == "All New Candidates":
-                        recipients = candidates_df[candidates_df['status'] == 'New']
-                    elif recipient_filter == "Interview Scheduled":
-                        recipients = candidates_df[candidates_df['status'] == 'Interview']
-                    else:
-                        recipients = candidates_df
-                    
-                    time.sleep(2)  # Simulate sending
-                    
-                    # Log activity
-                    db_manager.log_agent_activity(
-                        "Email Service",
-                        "bulk_campaign",
-                        f"Bulk email sent to {len(recipients)} candidates",
-                        "success"
-                    )
-                    
-                    st.success(f"Campaign sent to {len(recipients)} recipients!")
-                else:
-                    st.warning("No candidates found to send emails to.")
-    
-    st.divider()
-    
-    # Communication history
-    st.subheader("📜 Recent Communications")
-    
-    # Mock communication history
-    communications = [
-        {"timestamp": "2024-06-14 10:30", "type": "Email", "recipient": "john.doe@email.com", "subject": "Interview Invitation", "status": "Delivered"},
-        {"timestamp": "2024-06-14 09:15", "type": "SMS", "recipient": "+1-555-1234", "subject": "Interview Reminder", "status": "Delivered"},
-        {"timestamp": "2024-06-14 08:45", "type": "Email", "recipient": "jane.smith@email.com", "subject": "Application Received", "status": "Opened"},
-        {"timestamp": "2024-06-13 16:20", "type": "Email", "recipient": "mike.johnson@email.com", "subject": "Follow-up", "status": "Bounced"},
-    ]
-    
-    for comm in communications:
-        with st.container():
-            col1, col2, col3, col4 = st.columns([2, 1, 3, 1])
-            
-            with col1:
-                st.write(f"📧 {comm['type']}")
-                st.caption(comm['timestamp'])
-            
-            with col2:
-                st.write(comm['recipient'])
-            
-            with col3:
-                st.write(comm['subject'])
-            
-            with col4:
-                status_color = "🟢" if comm['status'] == 'Delivered' else "🟡" if comm['status'] == 'Opened' else "🔴"
-                st.write(f"{status_color} {comm['status']}")
-        
-        st.divider()
-
-with tab6:
     st.header("System Settings")
     
     # API Configuration
@@ -1188,31 +936,24 @@ with tab6:
         indeed_enabled = st.checkbox("Indeed Integration", value=True)
         glassdoor_enabled = st.checkbox("Glassdoor Integration", value=False)
         
-        if linkedin_enabled:
-            linkedin_key = st.text_input("LinkedIn API Key", type="password", placeholder="Enter LinkedIn API key")
-        
         st.write("**Communication APIs**")
         sendgrid_enabled = st.checkbox("SendGrid Email", value=True)
-        twilio_enabled = st.checkbox("Twilio SMS", value=False)
+        slack_enabled = st.checkbox("Slack Integration", value=False)
         
         if sendgrid_enabled:
-            sendgrid_key = st.text_input("SendGrid API Key", type="password", placeholder="Enter SendGrid API key")
+            sendgrid_key = st.text_input("SendGrid API Key", type="password", placeholder="SG.xxx")
     
     with col2:
         st.write("**AI/ML Services**")
         openai_enabled = st.checkbox("OpenAI GPT", value=True)
         gcp_enabled = st.checkbox("Google Cloud AI", value=True)
-        aws_enabled = st.checkbox("AWS Comprehend", value=False)
         
         if openai_enabled:
-            openai_key = st.text_input("OpenAI API Key", type="password", placeholder="Enter OpenAI API key")
+            openai_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-xxx")
         
         st.write("**Calendar Integration**")
         google_cal_enabled = st.checkbox("Google Calendar", value=True)
         outlook_enabled = st.checkbox("Outlook Calendar", value=False)
-        
-        if google_cal_enabled:
-            google_key = st.text_input("Google Calendar API Key", type="password", placeholder="Enter Google API key")
     
     st.divider()
     
@@ -1225,26 +966,19 @@ with tab6:
         st.write("**Sourcing Agent**")
         sourcing_frequency = st.selectbox("Sourcing Frequency", ["Every 15 minutes", "Hourly", "Daily", "Weekly"], index=1)
         max_candidates_per_run = st.number_input("Max Candidates per Run", value=10, min_value=1, max_value=100)
-        sourcing_keywords = st.text_area("Default Keywords", value="software engineer, python, javascript, react")
         
         st.write("**Screening Agent**")
         auto_screening = st.checkbox("Enable Auto-Screening", value=True)
         screening_threshold = st.slider("Auto-Screen Threshold", 0, 100, 70)
-        rejection_threshold = st.slider("Auto-Rejection Threshold", 0, 100, 40)
     
     with col2:
         st.write("**Interview Agent**")
         auto_scheduling = st.checkbox("Enable Auto-Scheduling", value=True)
         interview_buffer_hours = st.number_input("Interview Buffer (hours)", value=24, min_value=1, max_value=168)
-        default_duration = st.selectbox("Default Interview Duration", ["30 min", "45 min", "60 min", "90 min"], index=1)
         
         st.write("**Notification Settings**")
         email_notifications = st.checkbox("Email Notifications", value=True)
         slack_notifications = st.checkbox("Slack Notifications", value=False)
-        sms_notifications = st.checkbox("SMS Notifications", value=False)
-        
-        if slack_notifications:
-            slack_webhook = st.text_input("Slack Webhook URL", placeholder="https://hooks.slack.com/...")
     
     st.divider()
     
@@ -1259,25 +993,29 @@ with tab6:
             jobs_count = len(db_manager.get_jobs() or [])
             logs_count = len(db_manager.get_agent_logs(1000) or [])
             
+            try:
+                db_size = os.path.getsize(DATABASE_PATH) / 1024
+            except:
+                db_size = 0
+            
             st.info(f"""
             **Database Statistics:**
             - Candidates: {candidates_count}
             - Jobs: {jobs_count}
             - Agent Logs: {logs_count}
-            - Database Size: {os.path.getsize(DATABASE_PATH) / 1024:.1f} KB
+            - Database Size: {db_size:.1f} KB
             """)
     
     with col2:
         if st.button("🗑️ Clear Old Logs"):
-            # Clear logs older than 30 days
             cutoff_date = datetime.now() - timedelta(days=30)
             result = db_manager.execute_query(
                 "DELETE FROM agent_logs WHERE timestamp < ?",
-                (cutoff_date,)
+                (cutoff_date.isoformat(),)
             )
             
             if result is not None:
-                st.success(f"Cleared {result} old log entries")
+                st.success(f"Cleared old log entries")
             else:
                 st.error("Failed to clear logs")
     
@@ -1286,25 +1024,138 @@ with tab6:
             with st.spinner("Creating backup..."):
                 import shutil
                 backup_path = f"hr_recruiting_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-                shutil.copy2(DATABASE_PATH, backup_path)
-                time.sleep(1)
+                try:
+                    shutil.copy2(DATABASE_PATH, backup_path)
+                    st.success(f"Database backed up to {backup_path}")
+                except Exception as e:
+                    st.error(f"Backup failed: {e}")
+    
+    st.divider()
+    
+    # Demo Data
+    st.subheader("🎯 Demo Data")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📝 Load Sample Candidates"):
+            sample_candidates = [
+                {
+                    "name": "Alice Johnson",
+                    "email": "alice.johnson@email.com",
+                    "position": "Software Engineer",
+                    "skills": ["Python", "React", "AWS"],
+                    "experience": 5,
+                    "location": "San Francisco"
+                },
+                {
+                    "name": "Bob Smith", 
+                    "email": "bob.smith@email.com",
+                    "position": "Data Scientist",
+                    "skills": ["Python", "Machine Learning", "SQL"],
+                    "experience": 3,
+                    "location": "New York"
+                },
+                {
+                    "name": "Carol Davis",
+                    "email": "carol.davis@email.com", 
+                    "position": "DevOps Engineer",
+                    "skills": ["Docker", "Kubernetes", "AWS"],
+                    "experience": 7,
+                    "location": "Remote"
+                }
+            ]
             
-            st.success(f"Database backed up to {backup_path}")
+            for candidate_data in sample_candidates:
+                candidate = Candidate(
+                    id=f"CAND_{uuid.uuid4().hex[:8].upper()}",
+                    name=candidate_data['name'],
+                    email=candidate_data['email'],
+                    phone="",
+                    position=candidate_data['position'],
+                    skills=candidate_data['skills'],
+                    experience=candidate_data['experience'],
+                    score=random.randint(65, 95),
+                    status=random.choice(["New", "Screening", "Interview"]),
+                    location=candidate_data['location'],
+                    resume_url="",
+                    applied_date=datetime.now() - timedelta(days=random.randint(1, 10)),
+                    source="Demo Data",
+                    notes="Sample candidate"
+                )
+                db_manager.add_candidate(candidate)
+            
+            st.success("Sample candidates loaded!")
+    
+    with col2:
+        if st.button("💼 Load Sample Jobs"):
+            sample_jobs = [
+                {
+                    "title": "Senior Software Engineer",
+                    "department": "Engineering",
+                    "description": "Build scalable web applications",
+                    "requirements": ["Python", "React", "AWS"],
+                    "salary_range": "$120k - $160k"
+                },
+                {
+                    "title": "Data Scientist",
+                    "department": "Data Science", 
+                    "description": "Analyze data and build ML models",
+                    "requirements": ["Python", "SQL", "Machine Learning"],
+                    "salary_range": "$110k - $150k"
+                },
+                {
+                    "title": "DevOps Engineer",
+                    "department": "Infrastructure",
+                    "description": "Manage cloud infrastructure and CI/CD",
+                    "requirements": ["Docker", "Kubernetes", "AWS"],
+                    "salary_range": "$130k - $170k"
+                }
+            ]
+            
+            for job_data in sample_jobs:
+                job = Job(
+                    id=f"JOB_{uuid.uuid4().hex[:8].upper()}",
+                    title=job_data['title'],
+                    department=job_data['department'],
+                    description=job_data['description'],
+                    requirements=job_data['requirements'],
+                    location="San Francisco / Remote",
+                    salary_range=job_data['salary_range'],
+                    status="Active",
+                    posted_date=datetime.now() - timedelta(days=random.randint(1, 30)),
+                    applications_count=random.randint(5, 50),
+                    hiring_manager="Demo Manager"
+                )
+                db_manager.add_job(job)
+            
+            st.success("Sample jobs loaded!")
+    
+    with col3:
+        if st.button("🗑️ Clear All Data"):
+            if st.session_state.get('confirm_clear'):
+                # Clear all tables
+                db_manager.execute_query("DELETE FROM candidates")
+                db_manager.execute_query("DELETE FROM jobs") 
+                db_manager.execute_query("DELETE FROM agent_logs")
+                
+                st.success("All data cleared!")
+                st.session_state.confirm_clear = False
+                st.rerun()
+            else:
+                st.session_state.confirm_clear = True
+                st.warning("Click again to confirm deletion of ALL data")
     
     st.divider()
     
     # Save all settings
     if st.button("💾 Save All Settings", type="primary"):
         with st.spinner("Saving settings..."):
-            time.sleep(2)
+            time.sleep(1)
             
-            # In a real application, save settings to database
-            # db_manager.save_settings({...})
-            
-            # Log activity
             db_manager.log_agent_activity(
                 "System",
-                "settings_update",
+                "settings_update", 
                 "System settings updated",
                 "success"
             )
@@ -1326,7 +1177,23 @@ with col3:
     if st.button("📞 Support"):
         st.info("Contact: support@hrautomation.com")
 
-# Auto-refresh for real-time updates
-if st.checkbox("🔄 Auto-refresh (every 30s)", value=False):
+# Status bar at bottom
+with st.container():
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.caption(f"🗄️ Database: {len(db_manager.get_candidates() or [])} candidates")
+    
+    with col2:
+        st.caption(f"💼 Jobs: {len(db_manager.get_jobs() or [])} active")
+    
+    with col3:
+        st.caption(f"🤖 Agents: 4 online")
+    
+    with col4:
+        st.caption(f"🕒 Last update: {datetime.now().strftime('%H:%M:%S')}")
+
+# Auto-refresh option
+if st.sidebar.checkbox("🔄 Auto-refresh (30s)", value=False):
     time.sleep(30)
     st.rerun()
